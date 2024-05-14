@@ -92,4 +92,20 @@ async def reject_event(message: types.Message):
 
 @dp.message_handler(commands=['list_events'])
 async def list_events(message: types.Message):
-    cursor.execute('SELECT id, name, description FROM events
+    cursor.execute('SELECT id, name, description FROM events WHERE status = "approved"')
+    events = cursor.fetchall()
+    if not events:
+        await message.reply("Нет доступных мероприятий.")
+        return
+
+    for event in events:
+        event_id, name, description = event
+        keyboard = InlineKeyboardMarkup().add(
+            InlineKeyboardButton(f"Присоединиться к '{name}'", callback_data=f'join_{event_id}')
+        )
+        await message.reply(f"Название: {name}\nОписание: {description}", reply_markup=keyboard)
+
+@dp.callback_query_handler(Text(startswith='join_'))
+async def join_event(callback_query: types.CallbackQuery):
+    event_id = int(callback_query.data.split('_')[1])
+    user_id = callback_query.from_user.id
