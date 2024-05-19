@@ -1,6 +1,10 @@
 import sqlite3
 import telebot
 from telebot import types
+import datetime
+import schedule
+import time
+from threading import Thread
 
 bot = telebot.TeleBot('7063035298:AAGWZFZhS6b216kdQZVM41smvkMAGMDfwzw')
 ADMIN_CHAT_ID = 1147185372
@@ -8,97 +12,231 @@ ADMIN_CHAT_ID = 1147185372
 conn = sqlite3.connect('events.db', check_same_thread=False)
 cursor = conn.cursor()
 
-cursor.execute('''CREATE TABLE IF NOT EXISTS events (event_id INTEGER PRIMARY KEY, description TEXT, organizer_link TEXT)''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS events (event_id INTEGER PRIMARY KEY, description TEXT, organizer_link TEXT, end_time TEXT)''')
 conn.commit()
+
+def check_and_delete_events():
+    """ Удаление мероприятий, время которых истекло """
+    cursor.execute("SELECT event_id, end_time, organizer_link FROM events")
+    current_time = datetime.datetime.now()
+    for event_id, end_time_str, organizer_link in cursor.fetchall():
+        end_time = datetime.datetime.strptime(end_time_str, '%Y-%m-%d %H:%M:%S')
+        if current_time >= end_time:
+            if organizer_link.startswith('@'):
+                try:
+                    user_info = bot.get_chat(organizer_link)
+                    user_id = user_info.id
+                except Exception as e:
+                    user_id = None
+                    print(f"Не удалось получить информацию о пользователе {organizer_link}: {e}")
+            else:
+                prefix = 'tg://user?id='
+                user_id = int(organizer_link[len(prefix):]) if organizer_link.startswith(prefix) else None
+            
+            cursor.execute("DELETE FROM events WHERE event_id = ?", (event_id,))
+            conn.commit()
+            
+            # Уведомление администратора
+            bot.send_message(ADMIN_CHAT_ID, f"Мероприятие с ID {event_id} было автоматически удалено, так как его время истекло.")
+
+            # Уведомление пользователя, если его ID известен
+            if user_id:
+                bot.send_message(user_id, f"Ваше мероприятие с ID {event_id} было автоматически удалено, так как его время истекло.")
+            else:
+                print(f"Не удалось отправить сообщение пользователю {organizer_link} о удалении мероприятия с ID {event_id}.")
+
+def schedule_checker():
+    """ Функция для запуска планировщика в отдельном потоке """
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# Настраиваем планировщик для ежеминутной проверки
+schedule.every().minute.do(check_and_delete_events)
+Thread(target=schedule_checker).start()
 
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn1 = types.KeyboardButton("👋 Создать мероприятие")
     btn2 = types.KeyboardButton("❓ Посмотреть мероприятия")
-    btn3 = types.KeyboardButton("👑 Поддержка")
-    markup.add(btn1, btn2, btn3)
-    bot.send_message(message.chat.id, text="Привет, {0.first_name}! Я бот для создания мероприятия. Пока тестовый вариант. Если что не понятно, пиши /help".format(message.from_user), reply_markup=markup)
+    btn3 = types.KeyboardButton("🗑 Удалить мероприятие")
+    btn4 = types.KeyboardButton("👑 Поддержка")
+    markup.add(btn1, btn2, btn3, btn4)
+    bot.send_message(message.chat.id, text=f"Привет, {message.from_user.first_name}! Я бот для создания мероприятия. Если что не понятно, пиши /help", reply_markup=markup)
     
 @bot.message_handler(commands=['help'])
 def help(message):
-    bot.reply_to(message, "Доступные команды:\n/start - начало работы\n/delete_event - удалить мероприятие (только для админа)")  
-    
+    bot.reply_to(message, "Доступные команды:\n/start - начало работы\n")
 
 def send_to_admin(message):
-    user_id = message.from_user.id
-    bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"Новое сообщение от пользователя с ID {user_id}:\n{message.text}")
-    bot.send_message(message.chat.id, "Сообщение отправлено")
-    
-def add_event(message):
-    event_description = message.text
     user = message.from_user
-    if user.username:
-        organizer_link = f"@{user.username}"
+    
+    if message.text in ["👋 Создать мероприятие", "❓ Посмотреть мероприятия", "🗑 Удалить мероприятие", "👑 Поддержка"]:
+        handle_text(message)
     else:
-        organizer_link = f"tg://user?id={user.id}"
+        if user.username:
+            user_mention = f"@{user.username}" 
+        else:
+            user_mention = f'<a href="tg://user?id={user.id}">{user.first_name}</a>' 
     
-    cursor.execute("INSERT INTO events (description, organizer_link) VALUES (?, ?)", (event_description, organizer_link))
-    conn.commit()
-    bot.send_message(message.chat.id, "Мероприятие успешно добавлено")
+        text_to_admin = (f"Новое сообщение от пользователя {user_mention} (ID {user.id}):\n"
+                         f"{message.text}")
     
+        bot.send_message(chat_id=ADMIN_CHAT_ID, text=text_to_admin, parse_mode='HTML')
+        bot.send_message(message.chat.id, "Сообщение отправлено")
     
+def add_event_description(message):
+    user_id = message.from_user.id
+    organizer_link = f"@{message.from_user.username}" if message.from_user.username else f"tg://user?id={user_id}"
+    
+    if user_id != ADMIN_CHAT_ID:
+        cursor.execute("SELECT COUNT(*) FROM events WHERE organizer_link = ?", (organizer_link,))
+        event_count = cursor.fetchone()[0]
+        if event_count >= 3:
+            bot.send_message(message.chat.id, 'У Вас уже есть 3 активных мероприятия. Нельзя создать больше. Если необходимость есть, то пишите в "👑 Поддержку"')
+            return start(message)
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    cancel_button = types.KeyboardButton("Отмена")
+    markup.add(cancel_button)
+    
+    bot.send_message(
+        message.chat.id,
+        "Введите время окончания мероприятия в формате ГГГГ-ММ-ДД ЧЧ:ММ:СС (например, 2024-05-20 18:30:00).",
+        reply_markup=markup
+    )
+    bot.register_next_step_handler(message, add_event_time, message.text)
+
+def add_event_time(message, description):
+    if message.text == "Отмена":
+        bot.send_message(message.chat.id, "Создание мероприятия отменено.", reply_markup=types.ReplyKeyboardRemove())
+        return start(message)
+    
+    try:
+        end_time = datetime.datetime.strptime(message.text, '%Y-%m-%d %H:%M:%S')
+        current_time = datetime.datetime.now()
+        
+        if end_time <= current_time:
+            bot.send_message(message.chat.id, "Время окончания мероприятия должно быть в будущем. Попробуйте снова.")
+            return bot.register_next_step_handler(message, add_event_time, description)
+        
+        user_id = message.from_user.id
+        organizer_link = f"@{message.from_user.username}" if message.from_user.username else f"tg://user?id={user_id}"
+        
+        cursor.execute("INSERT INTO events (description, organizer_link, end_time) VALUES (?, ?, ?)", 
+                       (description, organizer_link, message.text))
+        conn.commit()
+        
+        bot.send_message(message.chat.id, "Мероприятие успешно добавлено", reply_markup=types.ReplyKeyboardRemove())
+        return start(message)
+    
+    except ValueError:
+        bot.send_message(message.chat.id, "Неправильный формат времени. Пожалуйста, введите время в правильном формате ГГГГ-ММ-ДД ЧЧ:ММ:СС.")
+        return bot.register_next_step_handler(message, add_event_time, description)
+    
+    except ValueError:
+        bot.send_message(message.chat.id, "Неправильный формат времени. Пожалуйста, введите время в правильном формате ГГГГ-ММ-ДД ЧЧ:ММ:СС.")
+        bot.register_next_step_handler(message, add_event_time, description)
+
 @bot.message_handler(commands=['events'])
 def get_events(message):
+    current_time = datetime.datetime.now()
     cursor.execute("SELECT * FROM events")
     events = cursor.fetchall()
+    
     if events:
+        response = "Текущее время: {}\n\nСписок текущих мероприятий:\n".format(current_time.strftime("%Y-%m-%d %H:%M:%S"))
         for event in events:
-            event_id, description, organizer_link = event
-            bot.send_message(ADMIN_CHAT_ID, f"Мероприятие ID: {event_id}\n Описание: {description}\n Организатор: {organizer_link}")
+            event_id, description, organizer_link, end_time = event
+            response += f"Мероприятие ID: {event_id}\nОписание: {description}\nОрганизатор: {organizer_link}\nЗаканчивается: {end_time}\n\n"
+        bot.send_message(message.chat.id, response)
     else:
-        bot.send_message(ADMIN_CHAT_ID, "Нет добавленных мероприятий")
-        
+        bot.send_message(message.chat.id, "Нет добавленных мероприятий")
+
 @bot.message_handler(commands=['delete_event'])
 def delete_event_command(message):
-    if message.chat.id == ADMIN_CHAT_ID:
-        msg = bot.send_message(message.chat.id, "Введите ID мероприятия, которое нужно удалить:")
-        bot.register_next_step_handler(msg, delete_event)
+    user_id = message.from_user.id
+    if user_id == ADMIN_CHAT_ID:       
+        reply_markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        cancel_button = types.KeyboardButton("Отмена")
+        reply_markup.add(cancel_button)
+
+        msg = bot.send_message(message.chat.id, "Выберите ID мероприятия для удаления или нажмите 'Отмена':", reply_markup=reply_markup)
+        bot.register_next_step_handler(msg, delete_event, user_id)
     else:
-        bot.send_message(message.chat.id, "Эта команда доступна только администратору.")
-
-def delete_event(message):
-    try:
-        event_id = int(message.text)
-        cursor.execute("DELETE FROM events WHERE event_id = ?", (event_id,))
-        conn.commit()
-        bot.send_message(ADMIN_CHAT_ID, f"Мероприятие с ID {event_id} удалено.")
-    except ValueError:
-        bot.send_message(message.chat.id, "Пожалуйста, введите корректный ID мероприятия.")
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Произошла ошибка при удалении мероприятия: {e}")        
-
-
-@bot.message_handler(content_types=['text'])
-def func(message):
-    if(message.text == "👋 Создать мероприятие"):
         if message.from_user.username:
             organizer_link = f"@{message.from_user.username}"
         else:
-            organizer_link = f"tg://user?id={message.from_user.id}"
-        cursor.execute("SELECT COUNT(*) FROM events WHERE organizer_link = ?", (organizer_link,))
-        count = cursor.fetchone()[0]
+            organizer_link = f"tg://user?id={user_id}"
         
-        if count < 2 or message.from_user.id == ADMIN_CHAT_ID:
-            bot.send_message(message.chat.id, text="Привет! Напишите описание мероприятия. \n Распиши следующее: дата и время мероприятия, что будет")
-            bot.register_next_step_handler(message, add_event)
+        cursor.execute("SELECT event_id, description FROM events WHERE organizer_link = ?", (organizer_link,))
+        user_events = cursor.fetchall()
+        
+        if user_events:
+            reply_markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+            for event in user_events:
+                event_button = types.KeyboardButton(str(event[0]))
+                reply_markup.add(event_button)
+            
+            cancel_button = types.KeyboardButton("Отмена")
+            reply_markup.add(cancel_button)
+
+            msg = bot.send_message(message.chat.id, "Выберите ID мероприятия для удаления или нажмите 'Отмена':", reply_markup=reply_markup)
+            bot.register_next_step_handler(msg, delete_event, user_id)
         else:
-            bot.send_message(message.chat.id, "Вы уже добавили максимальное количество мероприятий")
+            bot.send_message(message.chat.id, "У вас нет мероприятий, которые можно удалить.")
+
+def delete_event(message, user_id):
+    if message.text == "Отмена":
+        start(message)
+        return
+
+    try:
+        event_id = int(message.text.strip())
+
+        if user_id == ADMIN_CHAT_ID:
+            cursor.execute("DELETE FROM events WHERE event_id = ?", (event_id,))
+            if cursor.rowcount > 0:
+                conn.commit()
+                bot.send_message(message.chat.id, f"Мероприятие с ID {event_id} удалено.")
+            else:
+                bot.send_message(message.chat.id, "Мероприятие не найдено.")
+        else:
+            if message.from_user.username:
+                organizer_link = f"@{message.from_user.username}"
+            else:
+                organizer_link = f"tg://user?id={user_id}"
+
+            cursor.execute("SELECT * FROM events WHERE event_id = ? AND organizer_link = ?", (event_id, organizer_link))
+            if cursor.fetchone():
+                cursor.execute("DELETE FROM events WHERE event_id = ? AND organizer_link = ?", (event_id, organizer_link))
+                conn.commit()
+                bot.send_message(message.chat.id, f"Ваше мероприятие с ID {event_id} удалено.")
+            else:
+                bot.send_message(message.chat.id, "Вы не можете удалить это мероприятие или оно не существует.")
+        
+        start(message)
+
+    except ValueError:
+        bot.send_message(message.chat.id, "Пожалуйста, введите корректный ID мероприятия.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Произошла ошибка: {str(e)}")
+
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
+    if message.text == "👋 Создать мероприятие":
+        bot.send_message(message.chat.id, text="Привет! Напишите описание мероприятия.")
+        bot.register_next_step_handler(message, add_event_description)
     elif message.text == "❓ Посмотреть мероприятия":
         get_events(message)
-    
+    elif message.text == "🗑 Удалить мероприятие":
+        delete_event_command(message)
     elif message.text == "👑 Поддержка":
-        bot.send_message(message.chat.id, "Если есть вопросы, пожелания или просто хочется поговорить, то я жду Вашего сообщения")
+        bot.send_message(message.chat.id, "Если есть вопросы, пожелания или просто хочется поговорить, то я жду Вашего сообщения.")
         bot.register_next_step_handler(message, send_to_admin)
-        
-    
     else:
+        bot.send_message(message.chat.id, "Не понял команду, попробуйте ещё раз или используйте /help для получения списка команд.")
 
-        bot.send_message(message.chat.id, "Не понял команду")
-
-bot.polling(none_stop=True)
+if __name__ == "__main__":
+    bot.polling(none_stop=True)
