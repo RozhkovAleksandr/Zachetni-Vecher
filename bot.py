@@ -87,6 +87,8 @@ def send_to_admin(message):
         bot.send_message(message.chat.id, "Сообщение отправлено")
     
 def add_event_description(message):
+    if message.text in ["👋 Создать мероприятие", "❓ Посмотреть мероприятия", "🗑 Удалить мероприятие", "👑 Поддержка"]:
+        return handle_text(message)
     user_id = message.from_user.id
     organizer_link = f"@{message.from_user.username}" if message.from_user.username else f"tg://user?id={user_id}"
     
