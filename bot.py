@@ -59,11 +59,12 @@ Thread(target=schedule_checker).start()
 def start(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn1 = types.KeyboardButton("👋 Создать мероприятие")
-    btn2 = types.KeyboardButton("❓ Посмотреть мероприятия")
+    btn2 = types.KeyboardButton("❓ Список мероприятия")
     btn3 = types.KeyboardButton("🗑 Удалить мероприятие")
     btn4 = types.KeyboardButton("👑 Поддержка")
-    markup.add(btn1, btn2, btn3, btn4)
-    bot.send_message(message.chat.id, text=f"Привет, {message.from_user.first_name}! Я бот для создания мероприятия. Если что не понятно, пиши /help", reply_markup=markup)
+    btn5 = types.KeyboardButton("📄 Мои мероприятия")
+    markup.add(btn1, btn2, btn3, btn5, btn4)
+    bot.send_message(message.chat.id, text=f"Привет, {message.from_user.first_name}! Я бот для создания мероприятия", reply_markup=markup)
     
 @bot.message_handler(commands=['help'])
 def help(message):
@@ -72,7 +73,7 @@ def help(message):
 def send_to_admin(message):
     user = message.from_user
     
-    if message.text in ["👋 Создать мероприятие", "❓ Посмотреть мероприятия", "🗑 Удалить мероприятие", "👑 Поддержка"]:
+    if message.text in ["👋 Создать мероприятие", "❓ Список мероприятия", "🗑 Удалить мероприятие", "👑 Поддержка", "📄 Мои мероприятия"]:
         handle_text(message)
     else:
         if user.username:
@@ -87,7 +88,7 @@ def send_to_admin(message):
         bot.send_message(message.chat.id, "Сообщение отправлено")
     
 def add_event_description(message):
-    if message.text in ["👋 Создать мероприятие", "❓ Посмотреть мероприятия", "🗑 Удалить мероприятие", "👑 Поддержка"]:
+    if message.text in ["👋 Создать мероприятие", "❓ Список мероприятия", "🗑 Удалить мероприятие", "👑 Поддержка", "📄 Мои мероприятия"]:
         return handle_text(message)
     user_id = message.from_user.id
     organizer_link = f"@{message.from_user.username}" if message.from_user.username else f"tg://user?id={user_id}"
@@ -151,7 +152,7 @@ def get_events(message):
         response = "Текущее время: {}\n\nСписок текущих мероприятий:\n".format(current_time.strftime("%Y-%m-%d %H:%M:%S"))
         for event in events:
             event_id, description, organizer_link, end_time = event
-            response += f"Мероприятие ID: {event_id}\nОписание: {description}\nОрганизатор: {organizer_link}\nЗаканчивается: {end_time}\n\n"
+            response += f"Мероприятие ID: {event_id}\nОписание: {description}\nОрганизатор: {organizer_link}\nНачало: {end_time}\n\n"
         bot.send_message(message.chat.id, response)
     else:
         bot.send_message(message.chat.id, "Нет добавленных мероприятий")
@@ -224,21 +225,44 @@ def delete_event(message, user_id):
         bot.send_message(message.chat.id, "Пожалуйста, введите корректный ID мероприятия.")
     except Exception as e:
         bot.send_message(message.chat.id, f"Произошла ошибка: {str(e)}")
+        
+def my_events(message):
+    user_id = message.from_user.id
+    if message.from_user.username:
+        organizer_link = f"@{message.from_user.username}"
+    else:
+        organizer_link = f"tg://user?id={user_id}"
+    
+    cursor.execute("SELECT event_id, description, end_time FROM events WHERE organizer_link = ?", (organizer_link,))
+    events = cursor.fetchall()
+    
+    if not events:
+        bot.send_message(message.chat.id, "У вас нет созданных мероприятий.")
+        return
+    
+    response = "Ваши мероприятия:\n"
+    for event_id, description, end_time in events:
+        response += f"ID: {event_id}, Описание: {description}, Начало: {end_time}\n"
+    
+    bot.send_message(message.chat.id, response)
+    
 
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     if message.text == "👋 Создать мероприятие":
         bot.send_message(message.chat.id, text="Привет! Напишите описание мероприятия.")
         bot.register_next_step_handler(message, add_event_description)
-    elif message.text == "❓ Посмотреть мероприятия":
+    elif message.text == "❓ Список мероприятия":
         get_events(message)
     elif message.text == "🗑 Удалить мероприятие":
         delete_event_command(message)
     elif message.text == "👑 Поддержка":
         bot.send_message(message.chat.id, "Если есть вопросы, пожелания или просто хочется поговорить, то я жду Вашего сообщения.")
         bot.register_next_step_handler(message, send_to_admin)
+    elif message.text == "📄 Мои мероприятия":
+        my_events(message)
     else:
-        bot.send_message(message.chat.id, "Не понял команду, попробуйте ещё раз или используйте /help для получения списка команд.")
+        bot.send_message(message.chat.id, "Не понял команду, попробуйте ещё раз или используйте /start для начала работы.")
 
 if __name__ == "__main__":
     bot.polling(none_stop=True)
