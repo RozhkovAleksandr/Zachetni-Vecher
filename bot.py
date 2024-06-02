@@ -6,9 +6,7 @@ import schedule
 import time
 from threading import Thread
 import requests
-
-bot = telebot.TeleBot('7063035298:AAGWZFZhS6b216kdQZVM41smvkMAGMDfwzw')
-ADMIN_CHAT_ID = 1147185372
+from config import ADMIN_CHAT_ID, bot
 
 conn = sqlite3.connect('events.db', check_same_thread=False)
 cursor = conn.cursor()
