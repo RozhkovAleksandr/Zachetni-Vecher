@@ -1,0 +1,6 @@
+sqlite3
+telebot
+requests
+schedule
+datetime
+threading
