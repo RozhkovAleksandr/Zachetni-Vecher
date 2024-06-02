@@ -65,7 +65,7 @@ def start(message):
     btn4 = types.KeyboardButton("👑 Поддержка")
     btn5 = types.KeyboardButton("📄 Мои мероприятия")
     markup.add(btn1, btn2, btn3, btn5, btn4)
-    bot.send_message(message.chat.id, text=f"Привет, {message.from_user.first_name}! Я бот для создания мероприятия", reply_markup=markup)
+    bot.send_message(message.chat.id, text=f"Привет, {message.from_user.first_name}! Я бот для поиска и создания мероприятиий", reply_markup=markup)
     
 @bot.message_handler(commands=['help'])
 def help(message):
