@@ -5,6 +5,7 @@ import datetime
 import schedule
 import time
 from threading import Thread
+import requests
 
 bot = telebot.TeleBot('7063035298:AAGWZFZhS6b216kdQZVM41smvkMAGMDfwzw')
 ADMIN_CHAT_ID = 1147185372
@@ -289,4 +290,15 @@ def handle_text(message):
         bot.send_message(message.chat.id, "Не понял команду, попробуйте ещё раз или используйте /start для начала работы.")
 
 if __name__ == "__main__":
-    bot.polling(none_stop=True)
+    while True:
+        try:
+            bot.polling(none_stop=True, timeout=60)
+        except requests.exceptions.ReadTimeout:
+            print("Произошла ошибка ReadTimeout — переподключение через 5 секунд")
+            time.sleep(5)
+        except KeyboardInterrupt:
+            print("Бот остановлен вручную")
+            break
+        except Exception as e:
+            print(f"Непредвиденная ошибка: {e}")
+            time.sleep(5)
