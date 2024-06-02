@@ -190,6 +190,30 @@ def delete_event_command(message):
         else:
             bot.send_message(message.chat.id, "У вас нет мероприятий, которые можно удалить.")
 
+@bot.message_handler(commands=['send_message'])
+def start_sending_message(message):
+    if message.chat.id == ADMIN_CHAT_ID: 
+        msg = bot.send_message(message.chat.id, "Введите ID пользователя, которому хотите отправить сообщение:")
+        bot.register_next_step_handler(msg, get_user_id)
+    else:
+        bot.send_message(message.chat.id, "У вас нет прав для использования этой команды.")
+
+def get_user_id(message):
+    if message.text.isdigit():
+        user_id = int(message.text)
+        msg = bot.send_message(message.chat.id, "Введите текст сообщения:")
+        bot.register_next_step_handler(msg, send_user_message, user_id)
+    else:
+        bot.send_message(message.chat.id, "ID пользователя должен быть числом. Попробуйте ещё раз.")
+        return
+
+def send_user_message(message, user_id):
+    try:
+        bot.send_message(user_id, message.text)
+        bot.send_message(ADMIN_CHAT_ID, f"Сообщение успешно отправлено пользователю с ID {user_id}.")
+    except Exception as e:
+        bot.send_message(ADMIN_CHAT_ID, f"Ошибка при отправке сообщения пользователю с ID {user_id}: {str(e)}")
+
 def delete_event(message, user_id):
     if message.text == "Отмена":
         start(message)
