@@ -107,7 +107,7 @@ def add_event_description(message):
     
     bot.send_message(
         message.chat.id,
-        "Введите время окончания мероприятия в формате ГГГГ-ММ-ДД ЧЧ:ММ:СС (например, 2024-05-20 18:30:00).",
+        "Введите время начала мероприятия в формате ГГГГ-ММ-ДД ЧЧ:ММ:СС (например, 2024-05-20 18:30:00).",
         reply_markup=markup
     )
     bot.register_next_step_handler(message, add_event_time, message.text)
@@ -122,7 +122,7 @@ def add_event_time(message, description):
         current_time = datetime.datetime.now()
         
         if end_time <= current_time:
-            bot.send_message(message.chat.id, "Время окончания мероприятия должно быть в будущем. Попробуйте снова.")
+            bot.send_message(message.chat.id, "Время начала мероприятия должно быть в будущем. Попробуйте снова.")
             return bot.register_next_step_handler(message, add_event_time, description)
         
         user_id = message.from_user.id
